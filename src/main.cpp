@@ -5,6 +5,8 @@
 #include <Adafruit_SSD1306.h>
 #include <DHTesp.h>
 #include <PubSubClient.h>
+#include <ESP32Servo.h>
+#include <algorithm> 
 
 #define Buzzer 18
 #define LED 19
@@ -22,6 +24,16 @@
 #define OLED_ADDRESS 0x3C
 #define NTP_SERVER "pool.ntp.org"
 #define ldrPin 34
+#define SERVO_PIN 14 
+/////////////////////////////////////////////////
+// Servo Configuration
+// Window Control Parameters
+Servo windowServo;
+float theta_offset = 30.0;  // Default minimum angle
+float control_factor = 0.75;        // Default controlling factor
+float Tmed = 30.0;     // Default ideal storage temperature in °C
+float currentLightIntensity = 0.0; // Current light intensity
+
 
 /////////////////////////////////////////////////
 // WiFi and MQTT Configuration
@@ -93,6 +105,7 @@ void spinner();
 void setup_wifi();
 void callback(char* topic, byte* payload, unsigned int length);
 void reconnect();
+void adjustWindowPosition(float lightIntensity, float temperature);
 
 
 // Setup
@@ -111,6 +124,11 @@ void setup()
   pinMode(PB_Down, INPUT);
 
   dhtSensor.setup(DHT22_PIN, DHTesp::DHT22);
+  ////////////////////////////////////////////////
+// Initialize servo
+windowServo.attach(SERVO_PIN);
+windowServo.write(theta_offset); // Start at minimum position
+  ////////////////////////////////////////////////
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS))
   {
@@ -129,6 +147,7 @@ void setup()
   display2.display();
   delay(500);
 //////////////////////////////////////////////////
+ // Initialize WiFi and MQTT
 setup_wifi();
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
@@ -157,21 +176,29 @@ setup_wifi();
 void loop()
 {
   //////////////////////////////////////////////
-  Serial.print("samplingInterval: ");
-  Serial.println(samplingInterval);
-  Serial.println(String("sendingInterval: ") + sendingInterval);
-   if (!client.connected()) reconnect();
+  // Serial.print("samplingInterval: ");
+  // Serial.println(samplingInterval);
+  // Serial.println(String("sendingInterval: ") + sendingInterval);
+
+  
+  // MQTT connection management
+  if (!client.connected()) reconnect();
   client.loop();
 
-  // Sampling logic
+  // Sampling logic for light intensity
   if(millis() - lastSampleTime >= samplingInterval) {
     float rawValue = analogRead(ldrPin);
-    lightSum += rawValue / 4095.0;  // Normalize to 0-1
+    float normalizedValue = 1-(rawValue / 4095.0);  // Normalize to 0-1
+    lightSum += normalizedValue;
+    currentLightIntensity = normalizedValue; // Update current intensity
     sampleCount++;
     lastSampleTime = millis();
+    
+    // Adjust window based on current reading and temperature
+    adjustWindowPosition(currentLightIntensity, dhtSensor.getTemperature());
   }
 
-  // Sending logic
+  // Sending logic for averaged data
   if(millis() - lastSendTime >= sendingInterval && sampleCount > 0) {
     float average = lightSum / sampleCount;
     char msg[8];
@@ -635,4 +662,28 @@ void reconnect() {
       delay(5000);
     }
   }
+}
+///////////////////////////////////////////////////////////
+// Function to adjust window position based on formula
+void adjustWindowPosition(float lightIntensity, float temperature) {
+  // θ = θoffset + (180 - θoffset) × I × γ × ln(ts/tu) × T/Tmed
+  float ts_seconds = samplingInterval / 1000.0f;  // Convert ms to seconds
+  float tu_seconds = sendingInterval / 1000.0f;   // Convert ms to seconds
+  
+  // Avoid logarithm of zero or negative numbers
+  float ratio = std::max(ts_seconds / tu_seconds, 0.001f);
+  
+  float angle = theta_offset + (180 - theta_offset) * lightIntensity * control_factor * log(ratio) * (temperature / Tmed);  
+  // Constrain angle within servo limits
+  angle = constrain(angle, 0, 180);
+  
+  // Set the servo position
+  windowServo.write(round(angle));
+  
+  // Debug information
+  Serial.println("------ Window Adjustment -------");
+  Serial.println("Light Intensity: " + String(lightIntensity));
+  Serial.println("Temperature: " + String(temperature));
+  Serial.println("Sampling/Sending Ratio: " + String(ratio));
+  Serial.println("Calculated angle: " + String(angle));
 }
