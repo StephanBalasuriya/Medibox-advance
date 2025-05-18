@@ -176,10 +176,12 @@ setup_wifi();
 void loop()
 {
   //////////////////////////////////////////////
-  // Serial.print("samplingInterval: ");
-  // Serial.println(samplingInterval);
-  // Serial.println(String("sendingInterval: ") + sendingInterval);
-
+  Serial.print("samplingInterval: ");
+  Serial.println(samplingInterval);
+  Serial.println(String("sendingInterval: ") + sendingInterval);
+  Serial.println(String("theta_offset: ") + theta_offset);
+   Serial.println(String("control_factor: ") + control_factor);
+   Serial.println(String("Tmed: ") + Tmed);
   
   // MQTT connection management
   if (!client.connected()) reconnect();
@@ -638,7 +640,16 @@ void callback(char* topic, byte* payload, unsigned int length) {
   String message;
   for (int i=0; i<length; i++) message += (char)payload[i];
   
-  if(String(topic) == "esp32/sampling_interval") {
+  if(String(topic) == "esp32/theta_offset") {
+    theta_offset = message.toFloat();
+  }
+  else if(String(topic) == "esp32/control_factor") {
+    control_factor = message.toFloat();
+  }
+  else if(String(topic) == "esp32/Tmed") {
+    Tmed = message.toFloat();
+  }
+  else if(String(topic) == "esp32/sampling_interval") {
     samplingInterval = message.toInt() * 1000;
   }
   else if(String(topic) == "esp32/sending_interval") {
@@ -656,6 +667,9 @@ void reconnect() {
 
       client.subscribe("esp32/sampling_interval");
       client.subscribe("esp32/sending_interval");
+      client.subscribe("esp32/theta_offset");
+      client.subscribe("esp32/control_factor");
+      client.subscribe("esp32/Tmed");
     }else{
       Serial.println("Failed connecting to MQTT");
       Serial.println(client.state());
